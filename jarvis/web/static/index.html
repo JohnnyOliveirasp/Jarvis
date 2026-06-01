@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>J.A.R.V.I.S.</title>
+<style>
+  :root { --cyan:#00bfff; --cyan-dim:rgba(0,191,255,.55); --bg:#04070d; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:radial-gradient(circle at 50% 30%, #0a1622 0%, var(--bg) 70%);
+    color:#cde8ff; font-family:"Segoe UI",system-ui,sans-serif; height:100vh;
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header {
+    padding:14px 20px; border-bottom:1px solid rgba(0,191,255,.15);
+    display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+  }
+  header h1 { font-size:15px; letter-spacing:6px; margin:0; color:var(--cyan);
+    font-weight:600; text-shadow:0 0 12px rgba(0,191,255,.5); }
+  .grow { flex:1; }
+  input, select, button {
+    background:#081320; color:#cde8ff; border:1px solid rgba(0,191,255,.35);
+    border-radius:6px; padding:8px 10px; font-size:13px; outline:none;
+  }
+  input:focus, select:focus { border-color:var(--cyan); }
+  button { cursor:pointer; transition:.15s; }
+  button:hover { background:#0d2336; border-color:var(--cyan); }
+  button.primary { background:rgba(0,191,255,.15); border-color:var(--cyan); font-weight:600; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  #meet { width:280px; }
+  main { flex:1; display:flex; min-height:0; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; }
+  #orb { filter:drop-shadow(0 0 30px rgba(0,191,255,.25)); }
+  #status { letter-spacing:4px; font-size:12px; color:var(--cyan-dim); text-transform:uppercase; }
+  .mic-row { display:flex; align-items:center; gap:10px; }
+  /* medidor de nivel do microfone */
+  #meter { width:180px; height:10px; background:#081320; border:1px solid rgba(0,191,255,.3);
+    border-radius:5px; overflow:hidden; }
+  #meterFill { height:100%; width:0%; background:linear-gradient(90deg,#00bfff,#39ff14);
+    transition:width .05s linear; }
+  aside {
+    width:340px; border-left:1px solid rgba(0,191,255,.15); padding:14px;
+    display:flex; flex-direction:column; min-height:0;
+  }
+  aside h2 { font-size:11px; letter-spacing:3px; color:var(--cyan-dim); margin:0 0 10px; }
+  #log { flex:1; overflow-y:auto; font-size:13px; line-height:1.5; }
+  .msg { margin-bottom:10px; padding:8px 10px; border-radius:8px; }
+  .msg.you { background:rgba(0,191,255,.08); }
+  .msg.jarvis { background:rgba(57,255,20,.06); border-left:2px solid #39ff14; }
+  .msg.info { color:#7da7c4; font-size:12px; font-style:italic; }
+  .who { font-size:10px; letter-spacing:2px; opacity:.6; display:block; margin-bottom:2px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>J · A · R · V · I · S</h1>
+    <div class="grow"></div>
+    <input id="meet" type="text" placeholder="Cole o link do Google Meet..." />
+    <button id="joinBtn">Entrar na reunião</button>
+  </header>
+
+  <main>
+    <div class="center">
+      <canvas id="orb" width="380" height="440"></canvas>
+      <div id="status">DESCONECTADO</div>
+
+      <div class="mic-row">
+        <select id="micSelect" title="Microfone de entrada">
+          <option value="">— selecione o microfone —</option>
+        </select>
+        <div id="meter"><div id="meterFill"></div></div>
+      </div>
+      <div class="mic-row">
+        <button id="startBtn" class="primary">▶ Conectar microfone</button>
+        <button id="talkBtn" disabled>⏸ Pausar escuta</button>
+        <button id="stopBtn" disabled>■ Parar</button>
+      </div>
+    </div>
+
+    <aside>
+      <h2>CONVERSA</h2>
+      <div id="log"></div>
+    </aside>
+  </main>
+
+  <script src="/static/orb.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

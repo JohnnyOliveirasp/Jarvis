@@ -1,0 +1,30 @@
+# ── Secrets — NEVER commit ──
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+service-account.json
+
+# ── Python ──
+venv/
+venv_*/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ── Node / Electron ──
+node_modules/
+dist/
+out/
+
+# ── Generated audio / artifacts ──
+artifacts/
+*.mp3
+*.wav
+!assets/**/*.mp3
+!assets/**/*.wav
+
+# ── OS ──
+Thumbs.db
+.DS_Store

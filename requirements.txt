@@ -1,0 +1,16 @@
+# Jarvis — dependencias (versoes PINADAS apos dry-run, conforme protocolo de seguranca)
+# Fase 1: wake word + STT + cerebro Claude + voz ElevenLabs
+
+anthropic==0.69.0          # cerebro Claude Opus
+groq==0.33.0               # STT Whisper (rapido)
+requests==2.32.5           # chamadas REST (ElevenLabs streaming)
+python-dotenv==1.0.1       # .env (mesma versao do EntrevistaAI)
+numpy==2.2.6               # buffers de audio
+sounddevice==0.5.2         # captura de microfone (PortAudio)
+webrtcvad-wheels==2.0.14   # VAD com wheels prontas p/ Windows
+openwakeword==0.6.0        # wake word "hey jarvis" (mao-livre)
+onnxruntime==1.22.1        # backend de inferencia do openWakeWord
+
+# UI web (FastAPI + WebSocket)
+fastapi==0.121.2           # servidor web + WebSocket
+uvicorn[standard]==0.38.0  # ASGI server (inclui websockets, http-tools)
