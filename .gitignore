@@ -6,6 +6,17 @@
 credentials.json
 service-account.json
 
+# ── Perfis Chrome do bot do Meet (sessao logada — NUNCA commitar) ──
+.chrome_meet_profile/
+.chrome_meet_*/
+
+# ── Diagnosticos / screenshots do bot e testes locais ──
+_ImagesPrj/
+vexa-bot-check/
+
+# ── Logs (contem transcricoes de reuniao — NUNCA commitar) ──
+logs/
+
 # ── Python ──
 venv/
 venv_*/

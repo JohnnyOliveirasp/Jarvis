@@ -23,17 +23,21 @@ def _pcm_to_wav(pcm: bytes) -> io.BytesIO:
     return buf
 
 
-def transcribe(pcm: bytes) -> str:
-    """PCM16 mono -> texto. Retorna '' se vazio/silencio."""
+def transcribe(pcm: bytes, prompt: str = "") -> str:
+    """PCM16 mono -> texto. Retorna '' se vazio/silencio.
+
+    `prompt` biases vocabulary, but DO NOT pass a phrase containing the wake word:
+    on silence/echo Whisper echoes the prompt back, which then fires false wake
+    triggers. Default is empty for that reason.
+    """
     if len(pcm) < config.SAMPLE_RATE:  # < ~0.5s
         return ""
     wav = _pcm_to_wav(pcm)
+    kwargs = dict(file=wav, model=config.WHISPER_MODEL, response_format="text")
+    if prompt:
+        kwargs["prompt"] = prompt
     try:
-        text = _client.audio.transcriptions.create(
-            file=wav,
-            model=config.WHISPER_MODEL,
-            response_format="text",
-        )
+        text = _client.audio.transcriptions.create(**kwargs)
         result = (text or "").strip()
         logger.info("Transcrito: %s", result)
         return result

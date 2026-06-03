@@ -34,7 +34,7 @@
   #orb { filter:drop-shadow(0 0 30px rgba(0,191,255,.25)); }
   #status { letter-spacing:4px; font-size:12px; color:var(--cyan-dim); text-transform:uppercase; }
   .mic-row { display:flex; align-items:center; gap:10px; }
-  /* medidor de nivel do microfone */
+  /* Microphone level meter */
   #meter { width:180px; height:10px; background:#081320; border:1px solid rgba(0,191,255,.3);
     border-radius:5px; overflow:hidden; }
   #meterFill { height:100%; width:0%; background:linear-gradient(90deg,#00bfff,#39ff14);
@@ -49,6 +49,9 @@
   .msg.you { background:rgba(0,191,255,.08); }
   .msg.jarvis { background:rgba(57,255,20,.06); border-left:2px solid #39ff14; }
   .msg.info { color:#7da7c4; font-size:12px; font-style:italic; }
+  .msg.meet { background:rgba(255,176,0,.08); border-left:2px solid #ffb000; }
+  .msg.note { background:rgba(0,191,255,.05); border-left:2px solid var(--cyan-dim);
+    white-space:pre-wrap; font-size:12px; }
   .who { font-size:10px; letter-spacing:2px; opacity:.6; display:block; margin-bottom:2px; }
 </style>
 </head>
@@ -56,25 +59,25 @@
   <header>
     <h1>J · A · R · V · I · S</h1>
     <div class="grow"></div>
-    <input id="meet" type="text" placeholder="Cole o link do Google Meet..." />
-    <button id="joinBtn">Entrar na reunião</button>
+    <input id="meet" type="text" placeholder="Paste the Google Meet link..." />
+    <button id="joinBtn">Join meeting</button>
   </header>
 
   <main>
     <div class="center">
       <canvas id="orb" width="380" height="440"></canvas>
-      <div id="status">DESCONECTADO</div>
+      <div id="status">DISCONNECTED</div>
 
       <div class="mic-row">
-        <select id="micSelect" title="Microfone de entrada">
-          <option value="">— selecione o microfone —</option>
+        <select id="micSelect" title="Input microphone">
+          <option value="">Select microphone</option>
         </select>
         <div id="meter"><div id="meterFill"></div></div>
       </div>
       <div class="mic-row">
-        <button id="startBtn" class="primary">▶ Conectar microfone</button>
-        <button id="talkBtn" disabled>⏸ Pausar escuta</button>
-        <button id="stopBtn" disabled>■ Parar</button>
+        <button id="startBtn" class="primary">Connect microphone</button>
+        <button id="talkBtn" disabled>Pause listening</button>
+        <button id="stopBtn" disabled>Stop</button>
       </div>
     </div>
 
