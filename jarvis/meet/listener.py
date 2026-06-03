@@ -160,6 +160,7 @@ class MeetListener:
         self._suspended = False
         self._awaiting_until = 0.0   # follow-up window after a bare "Jarvis"
         self._cap_last = {}          # speaker -> last full caption text (for deltas)
+        self._cap_ignore_until = 0.0  # absorb (don't fire) captions until this time
         self._worker = None
 
     def start(self):
@@ -187,6 +188,18 @@ class MeetListener:
 
     def resume(self):
         self._suspended = False
+
+    def mute_captions(self, seconds: float):
+        """Absorb (track but don't fire/note) captions for `seconds` from now.
+
+        Google captions arrive with a delay, so the lines Jarvis "said" — and any
+        echo of his voice captioned as the owner — keep landing a few seconds AFTER
+        he stops speaking. During this window we still update the per-speaker
+        baseline (_cap_last) so the text doesn't later resurface as a fresh delta,
+        but we never turn it into a command or a minute. Kills the self-loop tail.
+        (suspend() already covers the actual speaking; this is the trailing tail.)
+        """
+        self._cap_ignore_until = time.monotonic() + max(0.0, seconds)
 
     def feed_b64(self, b64: str):
         """Called by the browser binding with base64 PCM16 16 kHz audio."""
@@ -229,7 +242,7 @@ class MeetListener:
         """
         text = (text or "").strip()
         speaker = (speaker or "").strip()
-        if not text or self._suspended:
+        if not text:
             return
         spk = speaker.lower()
         bot_name = (config.MEET_BOT_DISPLAY_NAME or "").strip().lower()
@@ -241,7 +254,12 @@ class MeetListener:
         key = speaker or "spk"
         prev = self._cap_last.get(key, "")
         delta = text[len(prev):].strip() if (prev and text.startswith(prev)) else text
+        # ALWAYS advance the baseline, even while muted — so captions that grow
+        # during/just-after Jarvis speaks are absorbed here and never resurface as
+        # a "new" delta once we resume. This is what stops the post-speech burst.
         self._cap_last[key] = text
+        if self._suspended or time.monotonic() < self._cap_ignore_until:
+            return  # speaking / echo cooldown: track only, never fire or note
         if not delta:
             return
 
@@ -253,16 +271,16 @@ class MeetListener:
         # even if the name was said at the end.
         wake = (config.MEET_WAKE_NAME or "jarvis").strip().lower()
         if self._find_wake(re.findall(r"\w+", delta.lower()), wake) >= 0:
-            self._maybe_command(text)
+            self._maybe_command(text, speaker)
         elif time.monotonic() < self._awaiting_until:
-            self._maybe_command(delta)
+            self._maybe_command(delta, speaker)
         elif self._is_owner(speaker) and (
             self._is_note_command(delta)
             or (config.MEET_OWNER_OPEN and self._looks_addressed(delta))
         ):
             # The owner can drive notes AND ask questions without the wake name.
             logger.info("owner addressed (no wake) from %r: %r", speaker, delta)
-            self._fire(text)
+            self._fire(text, speaker)
 
         # Minutes: store only the new part, and never the bot's own lines.
         if notes_on:
@@ -359,19 +377,27 @@ class MeetListener:
                         pass
 
     # Common ways Whisper mishears "Jarvis" (PT/EN accents, noisy rooms).
+    # NOTE: do NOT add real common words (e.g. "drivers") here — they cause false
+    # wake triggers on normal speech. Keep only close, uncommon mishears.
     _WAKE_MISHEARS = {
         "jarvis", "jarvas", "jarves", "jarvix", "jarviz", "jervis", "jervais",
-        "jorves", "jorvis", "jarbis", "jarvi", "charvis", "travis", "jarvys",
-        "drivers", "driver", "drives", "jervi", "jarv",
+        "jorves", "jorvis", "jarbis", "jarvys", "jarviss",
     }
 
     # Question/request openers — for the OWNER's open mode (answer without "Jarvis").
     _ADDRESS_HINTS = (
+        # questions
         "what", "how", "why", "when", "who", "where", "which", "can you",
-        "could you", "do you", "tell me", "explain", "give me", "is it", "are you",
+        "could you", "do you", "would you", "tell me", "explain", "give me",
+        "is it", "are you",
         "que", "qual", "quais", "quando", "como", "por que", "porque", "quem",
         "onde", "pode", "poderia", "me diga", "me diz", "explica", "explique",
         "fala", "diz", "voce pode", "você pode",
+        # imperatives addressed to the assistant (camera/mic/notes/leave/chat)
+        "turn on", "turn off", "mute", "unmute", "show yourself", "hide", "leave",
+        "send", "start", "stop", "take note", "post", "summari",
+        "liga", "ligar", "desliga", "desligar", "mostre", "mostra", "esconde",
+        "muta", "silencia", "sai", "manda", "envie", "envia", "anota", "resume",
     )
 
     def _looks_addressed(self, text: str) -> bool:
@@ -394,14 +420,15 @@ class MeetListener:
                 return i
         return -1
 
-    def _fire(self, command: str):
-        logger.info("room command -> %r", command)
+    def _fire(self, command: str, speaker: str = ""):
+        is_owner = self._is_owner(speaker)
+        logger.info("room command (owner=%s) -> %r", is_owner, command)
         try:
-            self._on_command(command)
+            self._on_command(command, is_owner)
         except Exception:
             logger.exception("meeting command callback failed")
 
-    def _maybe_command(self, text: str):
+    def _maybe_command(self, text: str, speaker: str = ""):
         if not self._on_command:
             return
         raw = (text or "").strip()
@@ -412,7 +439,7 @@ class MeetListener:
         # whole utterance as the command, no need to repeat the name.
         if now < self._awaiting_until:
             self._awaiting_until = 0.0
-            self._fire(raw)
+            self._fire(raw, speaker)
             return
         wake = (config.MEET_WAKE_NAME or "jarvis").strip().lower()
         # Split keeping positions so we can recover the text after the wake word.

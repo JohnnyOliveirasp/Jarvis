@@ -22,6 +22,12 @@ CAM_OFF = [
     'button[aria-label*="Desativar câmera" i]',
     'div[role="button"][aria-label*="câmera" i][aria-label*="Desativar" i]',
 ]
+CAM_ON = [
+    'button[aria-label*="Turn on camera" i]',
+    'button[aria-label*="Ativar câmera" i]',
+    'button[aria-label*="Ativar a câmera" i]',
+    'div[role="button"][aria-label*="câmera" i][aria-label*="Ativar" i]',
+]
 
 # Popups que aparecem antes de entrar ("Got it" / "Entendi", etc.)
 DISMISS_POPUPS = [

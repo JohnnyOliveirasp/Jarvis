@@ -13,6 +13,7 @@ Run: python -m uvicorn jarvis.web.server:app --port 8000
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,12 @@ MAX_UTTER_MS = 15000           # Safety cap.
 @app.get("/")
 def index():
     return FileResponse(str(STATIC / "index.html"))
+
+
+@app.get("/orb")
+def orb_cam():
+    # Clean full-screen orb for OBS Browser Source -> OBS Virtual Camera -> Meet.
+    return FileResponse(str(STATIC / "orb_cam.html"))
 
 
 def _rms(data: bytes) -> float:
@@ -196,6 +203,9 @@ class Session:
         if name == "set_meeting_mic":
             ok, val = bot.set_mic(bool(inp.get("muted", True)))
             return val
+        if name == "set_meeting_camera":
+            ok, val = bot.set_camera(bool(inp.get("on", True)))
+            return val
         if name == "start_taking_notes":
             ok, val = bot.start_notes()
             self.on_event("meet", "Started taking meeting notes.")
@@ -213,7 +223,7 @@ class Session:
             return val
         return f"unknown tool: {name}"
 
-    def handle_meeting_command_sync(self, text: str) -> str:
+    def handle_meeting_command_sync(self, text: str, is_owner: bool = False) -> str:
         text = (text or "").strip()
         if not text:
             return "empty meeting command"
@@ -221,8 +231,11 @@ class Session:
         if not bot.in_call:
             return "meeting command ignored because the bot is not in the meeting"
 
-        logger.info("[ROOM->jarvis] command: %s", text)
-        reply = self.room_brain.ask(text)   # tool-less: only answers the room
+        # Owner commands use the full tool brain (camera/mic/notes/leave); other
+        # participants use the limited room brain (answer + notes only).
+        brain = self.brain if is_owner else self.room_brain
+        logger.info("[ROOM->jarvis%s] command: %s", " OWNER" if is_owner else "", text)
+        reply = brain.ask(text)
         if not reply:
             return "no reply generated"
         logger.info("[jarvis->ROOM] %s", reply)
@@ -263,6 +276,18 @@ class Session:
         """Process microphone audio. Returns events as [(kind, value)]."""
         events = []
         if self.mode == "busy":
+            return events
+        # While Jarvis is speaking INTO the meeting, deafen the PC mic. Otherwise it
+        # picks up his own room voice through the speakers, transcribes it as "you",
+        # and he answers himself (see logs/log.txt: "[PC] you: The camera's on...").
+        # Headphones remove this path physically; this is the software backstop.
+        if self.bot is not None and (
+            getattr(self.bot, "speaking", False)
+            or time.monotonic() < getattr(self.bot, "_spoke_until", 0.0)
+        ):
+            self._frames.clear()
+            self._preroll.clear()
+            self._reset_utter()
             return events
         if self.mode == "manual":
             self.manual_buf.extend(data)
@@ -419,14 +444,16 @@ async def ws_endpoint(ws: WebSocket):
             try:
                 if kind == "note":
                     await ws.send_json({"type": "note", "text": msg})
-                elif kind == "meeting_command":
+                elif kind in ("meeting_command", "meeting_command_owner"):
+                    is_owner = kind == "meeting_command_owner"
                     await ws.send_json({"type": "meet", "text": "Meeting command: " + msg})
 
-                    async def _reply_to_meeting(command: str):
-                        val = await asyncio.to_thread(sess.handle_meeting_command_sync, command)
+                    async def _reply_to_meeting(command: str, owner: bool):
+                        val = await asyncio.to_thread(
+                            sess.handle_meeting_command_sync, command, owner)
                         await ws.send_json({"type": "meet", "text": "Meeting reply: " + str(val)})
 
-                    asyncio.create_task(_reply_to_meeting(msg))
+                    asyncio.create_task(_reply_to_meeting(msg, is_owner))
                 elif kind == "meet":
                     await ws.send_json({"type": "meet", "text": msg})
                 elif kind == "error":

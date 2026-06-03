@@ -40,7 +40,9 @@ MEET_BOT_EMAIL = os.getenv("MEET_BOT_EMAIL", "support@cvpunch.ai")
 # meeting language and pass it through the meeting-start tool.
 MEET_DEFAULT_INTRO = os.getenv(
     "MEET_DEFAULT_INTRO",
-    "Hello everyone, I am Jarvis, Johnny's assistant. I will take notes for this meeting. Thank you.",
+    "Olá a todos. Eu sou o Jarvis, assistente pessoal do Johnny. Estou aqui "
+    "para tomar notas da reunião. Se tiverem qualquer dúvida, é só me chamar "
+    "pelo meu nome e perguntar.",
 )
 # Microfone virtual por onde o Jarvis FALA na reuniao (VB-CABLE).
 # O Chrome usa "CABLE Output" como mic; nos tocamos a voz no "CABLE Input".
@@ -51,6 +53,11 @@ MEET_SPEAK_DEVICE = os.getenv("MEET_SPEAK_DEVICE", "CABLE Input")
 # O bot forca esse device interceptando o getUserMedia do Meet (ver meet/bot.py),
 # entao nao depende de selecionar na mao nas Configuracoes do Meet.
 MEET_MIC_DEVICE = os.getenv("MEET_MIC_DEVICE", "CABLE Output (VB-Audio Virtual Cable)")
+# Camera virtual (o orb): OBS Browser Source no /orb -> OBS Virtual Camera -> Meet.
+# Forçamos esse device de video no getUserMedia. So liga a camera se ele EXISTIR
+# (OBS rodando com a camera virtual ligada), senao fica off (nao mostra webcam real).
+MEET_CAMERA_DEVICE = os.getenv("MEET_CAMERA_DEVICE", "OBS Virtual Camera")
+MEET_ENABLE_CAMERA = os.getenv("MEET_ENABLE_CAMERA", "1") == "1"
 # Nome (no Meet) usado pra "chamar" o Jarvis quando ele estiver mutado ouvindo.
 MEET_WAKE_NAME = os.getenv("MEET_WAKE_NAME", "jarvis")
 # Como o Jarvis OUVE a sala:
@@ -73,7 +80,15 @@ MEET_JOIN_NAME = os.getenv("MEET_JOIN_NAME", "Jarvis")
 # Modo "solto" do dono: qualquer PERGUNTA/PEDIDO seu (dono) e respondido mesmo sem
 # dizer "Jarvis". Util quando voce esta conduzindo; pode incomodar em reuniao cheia
 # (ele responde tambem o que voce fala pros colegas). "0" = exige "Jarvis"/comando.
-MEET_OWNER_OPEN = os.getenv("MEET_OWNER_OPEN", "1") == "1"
+# PADRAO AGORA "0": com "1" as legendas atrasadas/erradas do dono viravam comandos
+# e ele entrava em loop respondendo o proprio eco (ver logs/log.txt 2026-06-03).
+# Na sala, TODOS (inclusive o dono) precisam dizer "Jarvis" pra disparar resposta.
+# Comandos de ATA especificos (start/stop/send notes) ainda funcionam sem o nome.
+MEET_OWNER_OPEN = os.getenv("MEET_OWNER_OPEN", "0") == "1"
+# Janela (segundos) em que o Jarvis IGNORA legendas e o mic do PC depois de falar
+# na sala, pra nao ouvir/transcrever o proprio eco e se auto-disparar. As legendas
+# do Google chegam atrasadas, entao precisa ser alguns segundos (nao 0.5).
+MEET_ECHO_COOLDOWN = float(os.getenv("MEET_ECHO_COOLDOWN", "3.5"))
 
 # ── Audio ──
 SAMPLE_RATE = 16000          # 16 kHz mono (padrao p/ wake word + whisper)

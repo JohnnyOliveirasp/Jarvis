@@ -37,30 +37,26 @@ _LAUNCH_ARGS = [
 ]
 
 
-def _force_mic_js() -> str:
-    """Init script that forces Meet's microphone to the VB-CABLE device.
-
-    Instead of fighting Meet's fragile Settings dialog, we wrap
-    navigator.mediaDevices.getUserMedia so every audio capture is pinned to the
-    "CABLE Output (VB-Audio Virtual Cable)" device — the same cable Python plays
-    the voice into. This runs before Meet's own code (add_init_script), so the
-    room hears Jarvis without anyone selecting the device by hand.
+def _force_devices_js() -> str:
+    """Init script that pins Meet's MIC to VB-CABLE and CAMERA to OBS Virtual
+    Camera, by wrapping navigator.mediaDevices.getUserMedia. Runs before Meet's
+    own code (add_init_script), so the room hears Jarvis (CABLE) and sees the orb
+    (OBS) without anyone selecting devices by hand. Sets window flags with the
+    chosen labels (or 'NOT_FOUND') for diagnostics.
     """
-    match = json.dumps((config.MEET_MIC_DEVICE or "cable output").lower())
+    audio_match = json.dumps((config.MEET_MIC_DEVICE or "cable output").lower())
+    video_match = json.dumps((config.MEET_CAMERA_DEVICE or "obs virtual camera").lower())
     return """
     (() => {
-      const MATCH = %s;
+      const AUDIO = %s, VIDEO = %s;
       const md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) return;
-      const pick = async () => {
+      const pick = async (kind, match, fallback) => {
         try {
           const devs = await md.enumerateDevices();
-          const ins = devs.filter(d => d.kind === 'audioinput');
-          let c = ins.find(d => (d.label || '').toLowerCase().includes(MATCH));
-          if (!c) c = ins.find(d => {
-            const l = (d.label || '').toLowerCase();
-            return l.includes('cable output') && l.includes('virtual cable');
-          });
+          const list = devs.filter(d => d.kind === kind);
+          let c = list.find(d => (d.label || '').toLowerCase().includes(match));
+          if (!c && fallback) c = list.find(d => fallback((d.label || '').toLowerCase()));
           return c || null;
         } catch (e) { return null; }
       };
@@ -68,7 +64,8 @@ def _force_mic_js() -> str:
       md.getUserMedia = async (constraints) => {
         try {
           if (constraints && constraints.audio) {
-            const c = await pick();
+            const c = await pick('audioinput', AUDIO,
+              l => l.includes('cable output') && l.includes('virtual cable'));
             window.__jarvisMicForced = c ? c.label : 'NOT_FOUND';
             if (c) {
               const a = (constraints.audio && typeof constraints.audio === 'object')
@@ -77,11 +74,21 @@ def _force_mic_js() -> str:
               constraints = Object.assign({}, constraints, { audio: a });
             }
           }
+          if (constraints && constraints.video) {
+            const c = await pick('videoinput', VIDEO, l => l.includes('obs'));
+            window.__jarvisCamForced = c ? c.label : 'NOT_FOUND';
+            if (c) {
+              const v = (constraints.video && typeof constraints.video === 'object')
+                ? Object.assign({}, constraints.video) : {};
+              v.deviceId = { exact: c.deviceId };
+              constraints = Object.assign({}, constraints, { video: v });
+            }
+          }
         } catch (e) {}
         return orig(constraints);
       };
     })();
-    """ % match
+    """ % (audio_match, video_match)
 
 
 class MeetBot:
@@ -95,6 +102,7 @@ class MeetBot:
 
         self.in_call = False
         self.mic_muted = True
+        self.cam_on = False
         self.notes = MeetingNotes()
         # The listener taps the room audio. It serves two purposes:
         #   - on_line: feed the live minutes (only shown/stored while notes active)
@@ -110,6 +118,15 @@ class MeetBot:
         self._captions_injected = False
         self._name_filled = False
         self._room_command_suppressed_until = 0.0
+        # Serialization: while one room command is being handled (brain -> TTS ->
+        # speak), drop any further room commands until it finishes. Without this,
+        # delayed captions queued several replies at once (see logs/log.txt).
+        self._room_busy_until = 0.0
+        # True while Jarvis is actually speaking INTO the meeting; _spoke_until adds
+        # a trailing window. The web Session reads these to mute the PC mic so it
+        # never transcribes Jarvis's own room voice and answers himself.
+        self.speaking = False
+        self._spoke_until = 0.0
 
     # Public API called from other threads.
     def start(self):
@@ -139,6 +156,9 @@ class MeetBot:
 
     def set_mic(self, muted: bool):
         return self._call("set_mic", timeout=30, muted=muted)
+
+    def set_camera(self, on: bool):
+        return self._call("set_camera", timeout=30, on=on)
 
     def post_chat(self, text: str):
         return self._call("post_chat", timeout=45, text=text)
@@ -171,7 +191,7 @@ class MeetBot:
                 )
                 # Force the meeting mic to VB-CABLE BEFORE any page script runs,
                 # so Meet captures Jarvis's voice without manual device selection.
-                self._ctx.add_init_script(_force_mic_js())
+                self._ctx.add_init_script(_force_devices_js())
                 self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
                 # Log if the page/context closes unexpectedly (helps diagnose the
                 # "tab closed by itself" / duplicate-account disconnect).
@@ -312,7 +332,7 @@ class MeetBot:
         logger.info("join: page loaded, url=%s", self._page.url)
         # Dismiss popups and turn camera/microphone off in the lobby.
         logger.info("join: dismiss popups=%s", self._click_first(S.DISMISS_POPUPS, timeout=2500))
-        logger.info("join: cam off=%s", self._click_first(S.CAM_OFF, timeout=4000))
+        self._setup_camera()
         logger.info("join: mic off=%s", self._click_first(S.MIC_OFF, timeout=4000))
         self.mic_muted = True
         # If Meet asks for a name (guest mode), fill it so "Ask to join" enables.
@@ -389,9 +409,12 @@ class MeetBot:
         else:
             self._inject_tap()
             self._listener.start()
-        forced = self._report_forced_mic()
+        mic = self._report_forced_mic()
+        cam = self._report_forced_cam()
+        logger.info("join: forced devices -> mic=%r cam=%r", mic, cam)
         self._on_event("info", "Jarvis joined the meeting." +
-                       (f" (meeting mic: {forced})" if forced else ""))
+                       (f" (mic: {mic})" if mic else "") +
+                       (f" (cam: {cam})" if cam else ""))
         return "joined the meeting"
 
     def _fill_join_name(self):
@@ -447,10 +470,48 @@ class MeetBot:
         except Exception as e:
             logger.warning("Failed to inject the caption reader: %s", e)
 
+    def _obs_cam_present(self) -> bool:
+        """True if the OBS Virtual Camera device exists (OBS running with it on)."""
+        try:
+            match = (config.MEET_CAMERA_DEVICE or "obs").lower()
+            return bool(self._page.evaluate(
+                """async (m) => {
+                  try {
+                    const ds = await navigator.mediaDevices.enumerateDevices();
+                    return ds.some(d => d.kind === 'videoinput'
+                        && (d.label || '').toLowerCase().includes(m));
+                  } catch (e) { return false; }
+                }""", match))
+        except Exception:
+            return False
+
+    def _setup_camera(self):
+        """Turn the camera ON (showing the orb via OBS) only if the OBS Virtual
+        Camera exists; otherwise keep it OFF so we never expose the real webcam."""
+        if config.MEET_ENABLE_CAMERA and self._obs_cam_present():
+            on = self._click_first(S.CAM_ON, timeout=4000)
+            logger.info("join: cam ON via OBS Virtual Camera=%s", on)
+            self.cam_on = True
+        else:
+            off = self._click_first(S.CAM_OFF, timeout=4000)
+            if config.MEET_ENABLE_CAMERA:
+                logger.info("join: OBS Virtual Camera NOT found -> camera stays OFF "
+                            "(start OBS + Virtual Camera). cam off=%s", off)
+            else:
+                logger.info("join: cam off=%s", off)
+            self.cam_on = False
+
     def _report_forced_mic(self) -> str:
         """Read which device the getUserMedia override locked the mic to."""
         try:
             return self._page.evaluate("() => window.__jarvisMicForced || ''") or ""
+        except Exception:
+            return ""
+
+    def _report_forced_cam(self) -> str:
+        """Read which device the override locked the camera to (set when cam turns on)."""
+        try:
+            return self._page.evaluate("() => window.__jarvisCamForced || ''") or ""
         except Exception:
             return ""
 
@@ -604,6 +665,28 @@ class MeetBot:
             return f"mic {'muted' if muted else 'unmuted'}"
         return f"could not {'mute' if muted else 'unmute'} the mic"
 
+    def _do_set_camera(self, on: bool):
+        # Button state: "Desativar câmera"/CAM_OFF visible => camera is ON;
+        # "Ativar câmera"/CAM_ON visible => camera is OFF.
+        if on:
+            if not self._obs_cam_present():
+                return ("the OBS Virtual Camera is not running, so I kept the "
+                        "camera off (start OBS and its Virtual Camera)")
+            if self._query_first(S.CAM_OFF) is not None:
+                self.cam_on = True
+                return "camera is already on"
+            ok = self._click_first(S.CAM_ON, timeout=4000)
+            self.cam_on = bool(ok)
+            return "camera on (showing the orb)" if ok else "could not turn the camera on"
+        else:
+            if self._query_first(S.CAM_ON) is not None:
+                self.cam_on = False
+                return "camera is already off"
+            ok = self._click_first(S.CAM_OFF, timeout=4000)
+            if ok:
+                self.cam_on = False
+            return "camera off" if ok else "could not turn the camera off"
+
     def _do_speak(self, mp3: bytes):
         """Unmute if needed, speak through VB-CABLE, then restore the prior state."""
         if not self.in_call:
@@ -612,7 +695,9 @@ class MeetBot:
         # Prevent Jarvis from treating its own meeting audio as a wake command,
         # and stop the listener from transcribing his own voice / its echo.
         self._room_command_suppressed_until = time.monotonic() + 120
-        self._listener.suspend()
+        self.speaking = True
+        self._spoke_until = time.monotonic() + 120   # reset to a real value in finally
+        self._listener.suspend()                     # absorbs captions while we talk
         was_muted = self.mic_muted
         logger.info("speak: was_muted=%s, mp3=%d bytes", was_muted, len(mp3 or b""))
         try:
@@ -633,9 +718,17 @@ class MeetBot:
                 self.mic_muted = muted_ok
             self._page.wait_for_timeout(800)   # let the room echo of our voice pass
             self._listener.resume()
-            # suspend() already swallowed the echo; keep only a tiny backup window
-            # so it does not block the user's legitimate follow-up reply.
-            self._room_command_suppressed_until = time.monotonic() + 0.5
+            # Google captions are DELAYED: the tail of what Jarvis just said (and
+            # any speaker->mic echo of it) keeps arriving for a few seconds. Hold a
+            # real cooldown — not 0.5s — on both room commands and captions, and
+            # mute the PC mic over the same window, so he never answers himself.
+            cooldown = config.MEET_ECHO_COOLDOWN
+            now = time.monotonic()
+            self._room_command_suppressed_until = now + cooldown
+            self._listener.mute_captions(cooldown)
+            self._room_busy_until = 0.0        # previous room command is done
+            self.speaking = False
+            self._spoke_until = now + cooldown
 
     def _do_post_chat(self, text: str):
         if not self._click_first(S.CHAT_OPEN, timeout=6000):
@@ -680,9 +773,19 @@ class MeetBot:
     def _on_note_line(self, text: str):
         self._on_event("note", text)
 
-    def _on_meeting_command(self, text: str):
-        if time.monotonic() < self._room_command_suppressed_until:
-            logger.info("meeting command suppressed during Jarvis speech: %s", text)
+    def _on_meeting_command(self, text: str, is_owner: bool = False):
+        now = time.monotonic()
+        if now < self._room_command_suppressed_until:
+            logger.info("meeting command suppressed during/after Jarvis speech: %s", text)
             return
-        logger.info("meeting command: %s", text)
-        self._on_event("meeting_command", text)
+        # Serialize: one room command at a time. While the previous one is still
+        # being handled (brain -> TTS -> speak), ignore new ones. _do_speak clears
+        # the flag; the 25s safety cap covers replies that never reach speak.
+        if now < self._room_busy_until:
+            logger.info("meeting command dropped (still handling previous): %s", text)
+            return
+        self._room_busy_until = now + 25
+        logger.info("meeting command (owner=%s): %s", is_owner, text)
+        # Owner commands get the full tool brain (camera/mic/notes/leave); others
+        # get the limited room brain (answer + notes only).
+        self._on_event("meeting_command_owner" if is_owner else "meeting_command", text)
